@@ -46,36 +46,7 @@ def get_audio_length(path):
 
 def keras_pad_seqs(sequences, maxlen=None, dtype='int32',
                   padding='pre', truncating='pre', value=0.):
-    """Pads sequences to the same length.
-    This function transforms a list of
-    `num_samples` sequences (lists of integers)
-    into a 2D Numpy array of shape `(num_samples, num_timesteps)`.
-    `num_timesteps` is either the `maxlen` argument if provided,
-    or the length of the longest sequence otherwise.
-    Sequences that are shorter than `num_timesteps`
-    are padded with `value` at the end.
-    Sequences longer than `num_timesteps` are truncated
-    so that they fit the desired length.
-    The position where padding or truncation happens is determined by
-    the arguments `padding` and `truncating`, respectively.
-    Pre-padding is the default.
-    # Arguments
-        sequences: List of lists, where each element is a sequence.
-        maxlen: Int, maximum length of all sequences.
-        dtype: Type of the output sequences.
-            To pad sequences with variable length strings, you can use `object`.
-        padding: String, 'pre' or 'post':
-            pad either before or after each sequence.
-        truncating: String, 'pre' or 'post':
-            remove values from sequences larger than
-            `maxlen`, either at the beginning or at the end of the sequences.
-        value: Float or String, padding value.
-    # Returns
-        x: Numpy array with shape `(len(sequences), maxlen)`
-    # Raises
-        ValueError: In case of invalid values for `truncating` or `padding`,
-            or in case of invalid shape for a `sequences` entry.
-    """
+    """Pads sequences to the same length."""
     if not hasattr(sequences, '__len__'):
         raise ValueError('`sequences` must be iterable.')
     num_samples = len(sequences)
@@ -86,43 +57,42 @@ def keras_pad_seqs(sequences, maxlen=None, dtype='int32',
             lengths.append(len(x))
         except TypeError:
             raise ValueError('`sequences` must be a list of iterables. '
-                             'Found non-iterable: ' + str(x))
+                           'Found non-iterable: ' + str(x))
 
     if maxlen is None:
         maxlen = np.max(lengths)
 
-    # take the sample shape from the first non empty sequence
-    # checking for consistency in the main loop below.
+    # サンプルの形状を最初の空でないシーケンスから取得
     sample_shape = tuple()
     for s in sequences:
         if len(s) > 0:
             sample_shape = np.asarray(s).shape[1:]
             break
 
-    is_dtype_str = np.issubdtype(dtype, np.str_) or np.issubdtype(dtype, np.unicode_)
-    if isinstance(value, six.string_types) and dtype != object and not is_dtype_str:
+    # dtype チェックの修正
+    is_dtype_str = np.issubdtype(dtype, np.str_)
+    if isinstance(value, str) and dtype != object and not is_dtype_str:
         raise ValueError("`dtype` {} is not compatible with `value`'s type: {}\n"
-                         "You should set `dtype=object` for variable length strings."
-                         .format(dtype, type(value)))
+                        "You should set `dtype=object` for variable length strings."
+                        .format(dtype, type(value)))
 
     x = np.full((num_samples, maxlen) + sample_shape, value, dtype=dtype)
     for idx, s in enumerate(sequences):
         if not len(s):
-            continue  # empty list/array was found
+            continue  # 空のリスト/配列が見つかった場合
         if truncating == 'pre':
             trunc = s[-maxlen:]
         elif truncating == 'post':
             trunc = s[:maxlen]
         else:
-            raise ValueError('Truncating type "%s" '
-                             'not understood' % truncating)
+            raise ValueError('Truncating type "%s" not understood' % truncating)
 
-        # check `trunc` has expected shape
+        # truncのシェイプを確認
         trunc = np.asarray(trunc, dtype=dtype)
         if trunc.shape[1:] != sample_shape:
             raise ValueError('Shape of sample %s of sequence at position %s '
-                             'is different from expected shape %s' %
-                             (trunc.shape[1:], idx, sample_shape))
+                           'is different from expected shape %s' %
+                           (trunc.shape[1:], idx, sample_shape))
 
         if padding == 'post':
             x[idx, :len(trunc)] = trunc
@@ -131,7 +101,6 @@ def keras_pad_seqs(sequences, maxlen=None, dtype='int32',
         else:
             raise ValueError('Padding type "%s" not understood' % padding)
     return x
-
 
 def pad_sequences(sequences, pad_value=None, max_len=None):
     # If a list of features are supposed to be sequences of the same length
@@ -199,7 +168,7 @@ def featurize_mfcc(f=None, offset=0, duration=None, y=None, sr=None,
     return feats
 
 def featurize_melspec(f=None, offset=None, duration=None, y=None, sr=None,
-        hop_length=None , augment_fn=None, spec_augment_fn=None, **kwargs):
+        hop_length=None, augment_fn=None, spec_augment_fn=None, **kwargs):
     """ Accepts either a filepath with optional offset/duration
     or a 1d signal y and sample rate sr. But not both.
     """
@@ -219,16 +188,31 @@ def featurize_melspec(f=None, offset=None, duration=None, y=None, sr=None,
             import pdb; pdb.set_trace()
     else:
         if offset is not None and duration is not None:
-            start_sample = librosa.core.time_to_samples(offset,sr)
-            duration_in_samples = librosa.core.time_to_samples(duration,sr)
+            start_sample = librosa.core.time_to_samples(offset, sr)
+            duration_in_samples = librosa.core.time_to_samples(duration, sr)
             y = y[start_sample:start_sample+duration_in_samples]
 
     if augment_fn is not None:
         y = augment_fn(y)
-    S = librosa.feature.melspectrogram(y, sr, hop_length=hop_length).T
+
+    # librosa.feature.melspectrogram のパラメータをキーワード引数として明示的に指定
+    S = librosa.feature.melspectrogram(
+        y=y,
+        sr=sr,
+        hop_length=hop_length,
+        n_mels=128,  # メルフィルタバンクの数を指定
+        n_fft=2048,  # FFTのウィンドウサイズを指定
+        win_length=None,  # win_lengthをデフォルトに設定
+        window='hann',  # ウィンドウタイプを指定
+        center=True,  # 信号をパディングしてフレームを中心に配置
+        pad_mode='reflect'  # パディングモードを指定
+    ).T
+
     S = librosa.amplitude_to_db(S, ref=np.max)
+    
     if spec_augment_fn is not None:
         S = spec_augment_fn(S)
+    
     return S
 
 #def load_audio_file_segments(f, sr, segments):
