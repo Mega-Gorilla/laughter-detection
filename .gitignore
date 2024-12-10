@@ -54,6 +54,5 @@ Pipfile.lock
 scripts/Development.ipynb
 scripts/train_backup.py
 
-
-
-
+tst_wave/
+.conda/
