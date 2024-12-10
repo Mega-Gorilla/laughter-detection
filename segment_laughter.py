@@ -5,6 +5,7 @@ import librosa
 import numpy as np
 import scipy
 import tgt
+import json
 from tqdm import tqdm
 from functools import partial
 from distutils.util import strtobool
@@ -16,11 +17,11 @@ import dataset_utils, audio_utils, data_loaders, torch_utils
 
 class LaughterDetector:
     def __init__(self, 
-                 model_path='checkpoints/in_use/resnet_with_augmentation',
-                 config_name='resnet_with_augmentation',
-                 threshold=0.5,
-                 min_length=0.2,
-                 sample_rate=8000):
+                model_path='checkpoints/in_use/resnet_with_augmentation',
+                config_name='resnet_with_augmentation',
+                threshold=0.5,
+                min_length=0.2,
+                sample_rate=8000):
         """
         Initialize the LaughterDetector with model and configuration parameters.
         """
@@ -31,39 +32,102 @@ class LaughterDetector:
         self.sample_rate = sample_rate
         self.device = self._setup_device()
         self.model = self._setup_model()
+        self._debug_cuda_availability() 
+
+    def _debug_cuda_availability(self):
+        """
+        Debug CUDA availability and device properties
+        """
+        print("\n=== CUDA Debug Information ===")
+        print(f"CUDA is available: {torch.cuda.is_available()}")
+        
+        if torch.cuda.is_available():
+            print(f"CUDA version: {torch.version.cuda}")
+            print(f"Number of CUDA devices: {torch.cuda.device_count()}")
+            
+            for i in range(torch.cuda.device_count()):
+                props = torch.cuda.get_device_properties(i)
+                print(f"\nDevice {i}: {props.name}")
+                print(f"  Compute capability: {props.major}.{props.minor}")
+                print(f"  Total memory: {props.total_memory / 1024**3:.2f} GB")
+                print(f"  Current device memory usage: {torch.cuda.memory_allocated(i) / 1024**2:.2f} MB")
+        
+            print(f"\nCurrent device: {torch.cuda.current_device()}")
+            print(f"Default device: {self.device}")
+            
+            # モデルのデバイス配置を確認
+            if hasattr(self, 'model'):
+                print("\nModel device check:")
+                if next(self.model.parameters(), None) is not None:
+                    print(f"Model device: {next(self.model.parameters()).device}")
+                    print(f"Model memory usage: {torch.cuda.memory_allocated() / 1024**2:.2f} MB")
+                else:
+                    print("Model has no parameters")
+            else:
+                print("\nModel not initialized yet")
+        
+        print("\nPyTorch version:", torch.__version__)
+        print("===========================\n")
 
     def _setup_device(self):
         """
-        Set up the computation device (GPU if available, otherwise CPU).
+        Set up the computation device (GPU if available, otherwise CPU) with detailed logging
         """
         if torch.cuda.is_available():
-            print("GPU is available. Using CUDA.")
-            return torch.device('cuda')
+            try:
+                device = torch.device('cuda')
+                # GPUメモリの初期状態を確認
+                print(f"Initial GPU memory allocated: {torch.cuda.memory_allocated() / 1024**2:.2f} MB")
+                print(f"Initial GPU memory cached: {torch.cuda.memory_reserved() / 1024**2:.2f} MB")
+                
+                # テストテンソルでGPUが実際に使えるか確認
+                test_tensor = torch.tensor([1.0], device=device)
+                print("Successfully created test tensor on GPU")
+                
+                print("GPU is available and working. Using CUDA.")
+                return device
+            except Exception as e:
+                print(f"Error initializing CUDA device: {str(e)}")
+                print("Falling back to CPU.")
+                return torch.device('cpu')
         else:
             print("GPU is not available. Using CPU.")
             return torch.device('cpu')
 
     def _setup_model(self):
         """
-        Set up and load the model.
+        Set up and load the model with device placement verification
         """
         model = self.config['model'](
             dropout_rate=0.0, 
             linear_layer_size=self.config['linear_layer_size'], 
             filter_sizes=self.config['filter_sizes']
         )
-        model.set_device(self.device)
-
+        
+        # モデルを明示的にデバイスに移動
+        model = model.to(self.device)
+        
         if os.path.exists(self.model_path):
             checkpoint_path = os.path.join(self.model_path, 'best.pth.tar')
-            # セーフリストの問題を回避するために直接weights_only=Falseを使用
-            checkpoint = torch.load(
-                checkpoint_path, 
-                map_location=self.device,
-                weights_only=False  # 信頼できるモデルの場合(セキュリテリスクあり)
-            )
-            model.load_state_dict(checkpoint['state_dict'])
-            model.eval()
+            try:
+                checkpoint = torch.load(
+                    checkpoint_path, 
+                    map_location=self.device,
+                    weights_only=False
+                )
+                model.load_state_dict(checkpoint['state_dict'])
+                model.eval()
+                
+                # モデルのデバイス配置を確認
+                print(f"\nModel device verification:")
+                print(f"Model parameters device: {next(model.parameters()).device}")
+                
+                # GPUメモリ使用状況を確認（GPUの場合）
+                if self.device.type == 'cuda':
+                    print(f"GPU memory after model load: {torch.cuda.memory_allocated() / 1024**2:.2f} MB")
+            except Exception as e:
+                print(f"Error loading model: {str(e)}")
+                raise
         else:
             raise Exception(f"Model checkpoint not found at {self.model_path}")
 
@@ -94,7 +158,8 @@ class LaughterDetector:
             num_workers=4, 
             batch_size=8, 
             shuffle=False, 
-            collate_fn=collate_fn
+            collate_fn=collate_fn,
+            persistent_workers=True
         )
 
         # Make predictions
@@ -142,12 +207,18 @@ class LaughterDetector:
 
     def _save_results(self, instances, audio_path, output_dir, save_to_audio_files, save_to_textgrid):
         """
-        Save results to audio files and/or TextGrid.
+        Save results to audio files, TextGrid, and JSON format.
         """
         if not output_dir:
             raise Exception("Need to specify an output directory to save files")
 
         os.makedirs(output_dir, exist_ok=True)
+        results = {
+            "input_file": audio_path,
+            "total_laughs": len(instances),
+            "laughs": []
+        }
+        
         full_res_y, full_res_sr = librosa.load(audio_path, sr=44100)
         
         if save_to_audio_files:
@@ -157,10 +228,30 @@ class LaughterDetector:
                 full_res_sr, 
                 output_dir
             )
+            # 各笑い声セグメントの情報をJSONに追加
+            for i, (instance, wav_path) in enumerate(zip(instances, wav_paths)):
+                laugh_info = {
+                    "id": i,
+                    "start_time": float(instance[0]),
+                    "end_time": float(instance[1]),
+                    "duration": float(instance[1] - instance[0]),
+                    "audio_file": wav_path
+                }
+                results["laughs"].append(laugh_info)
             print(laugh_segmenter.format_outputs(instances, wav_paths))
 
         if save_to_textgrid:
-            self._save_textgrid(instances, audio_path, output_dir)
+            textgrid_path = self._save_textgrid(instances, audio_path, output_dir)
+            results["textgrid_file"] = textgrid_path
+
+        # 結果をJSONファイルとして保存
+        base_name = os.path.splitext(os.path.basename(audio_path))[0]
+        json_path = os.path.join(output_dir, f"{base_name}_results.json")
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(results, f, indent=2)
+        print(f'Saved detection results to {json_path}')
+
+        return results
 
     def _save_audio_segments(self, instances, full_res_y, full_res_sr, output_dir):
         """
@@ -188,6 +279,7 @@ class LaughterDetector:
     def _save_textgrid(self, instances, audio_path, output_dir):
         """
         Save laughter segments to TextGrid format.
+        Returns the path to the saved TextGrid file.
         """
         laughs = [{'start': i[0], 'end': i[1]} for i in instances]
         tg = tgt.TextGrid()
@@ -201,6 +293,7 @@ class LaughterDetector:
         output_path = os.path.join(output_dir, f"{fname}_laughter.TextGrid")
         tgt.write_to_file(tg, output_path)
         print(f'Saved laughter segments in {output_path}')
+        return output_path
 
 
 import argparse

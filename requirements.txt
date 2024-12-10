@@ -1,5 +1,4 @@
 librosa
-torch
 tgt
 pyloudnorm
 praatio<5.0
@@ -7,3 +6,4 @@ tensorboardX
 pandas
 tqdm
 nltk
+torch
