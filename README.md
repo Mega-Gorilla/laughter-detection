@@ -1,3 +1,9 @@
+forked from [jrgillick/laughter-detection](https://github.com/jrgillick/laughter-detection)
+
+本フォークレポジトリは、python3.6.1向けに作成された「laughter-detection」のコードをPython3.11向けに修正し・一部新機能を追加したレポジトリです。
+
+This fork repository is a repository of ‘laughter-detection’ code created for python 3.6.1, modified for Python 3.11 and with some new features.
+
 # laughter-detection
 
 ### UPDATE(August 2021):
