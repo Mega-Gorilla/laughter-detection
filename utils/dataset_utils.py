@@ -2,8 +2,8 @@ import pandas as pd, numpy as np, math, os
 from praatio import tgio
 from nltk.tokenize import word_tokenize
 from joblib import Parallel, delayed
-import text_utils
-import audio_utils
+from . import text_utils
+from . import audio_utils
 import itertools
 from tqdm import tqdm
 
