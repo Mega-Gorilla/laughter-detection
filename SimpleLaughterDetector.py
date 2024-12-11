@@ -1,6 +1,6 @@
 import os
 from dataclasses import dataclass
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple
 import json
 from .detector import LaughterDetector
 
@@ -53,7 +53,7 @@ class SimpleLaughterDetector:
         output_dir: Optional[str] = None,
         save_audio: bool = False,
         save_textgrid: bool = False
-    ) -> List[LaughSegment]:
+    ) -> Tuple[List[LaughSegment], Optional[str]]:
         """
         音声ファイルから笑い声を検出する
 
@@ -70,8 +70,9 @@ class SimpleLaughterDetector:
 
         Returns
         -------
-        List[LaughSegment]
-            検出された笑い声セグメントのリスト
+        Tuple[List[LaughSegment], Optional[str]]
+            検出された笑い声セグメントのリストとJSONファイルパス
+            output_dirが指定されていない場合、JSONパスはNoneとなる
         """
         if output_dir and not os.path.exists(output_dir):
             os.makedirs(output_dir)
@@ -96,7 +97,14 @@ class SimpleLaughterDetector:
             )
             laugh_segments.append(segment)
 
-        return laugh_segments
+        # JSONファイルのパスを生成
+        json_path = None
+        if output_dir:
+            base_name = os.path.splitext(os.path.basename(audio_path))[0]
+            json_path = os.path.join(output_dir, f"{base_name}_results.json")
+            self.save_results(laugh_segments, json_path)
+
+        return laugh_segments, json_path
 
     def save_results(
         self,
@@ -139,16 +147,17 @@ if __name__ == "__main__":
     )
     
     # 笑い声の検出
-    laugh_segments = detector.detect_from_file(
+    laugh_segments, json_path = detector.detect_from_file(
         audio_path="sample.wav",
         output_dir="output",
         save_audio=True
     )
     
-    # 結果の表示と保存
+    # 結果の表示
     print(f"検出された笑い声の数: {len(laugh_segments)}")
     for i, segment in enumerate(laugh_segments):
         print(f"笑い声 {i + 1}: {segment.start_time:.2f}秒 - {segment.end_time:.2f}秒 "
               f"(長さ: {segment.duration:.2f}秒)")
     
-    detector.save_results(laugh_segments, "output/results.json")
+    if json_path:
+        print(f"結果をJSONファイルに保存しました: {json_path}")
